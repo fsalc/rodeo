@@ -23,6 +23,9 @@ class Condition:
         if len(self.field.split('.')) == 1:
             return f'''{f'"{self.field}"' if '.' not in self.field else self.field} {self.operator} {self._get_value_str(self.value)}'''
         return f'{self.field} {self.operator} {self._get_value_str(self.value)}'
+    
+    def to_dict(self):
+        return {'attr': self.field, 'op': self.operator, 'value': self.value}
 
 
 class Conditions:

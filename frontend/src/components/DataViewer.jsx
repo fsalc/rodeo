@@ -1,6 +1,7 @@
-import { Badge, Center, Container, Loader, ScrollArea, Text, Table, Alert, Stack } from "@mantine/core"
-import { IconInfoCircle } from "@tabler/icons-react";
+import { Badge, Center, Container, Loader, ScrollArea, Text, Table, Alert, Stack, Divider, Title } from "@mantine/core"
+import { IconDatabase, IconInfoCircle } from "@tabler/icons-react";
 import Query from "./Query";
+import Summary from "./Summary";
 
 let dataId = 0;
 
@@ -23,7 +24,7 @@ const rowGroups = (row, groups) => {
     return badges.length === 0 ? <Center>•</Center> : badges
 }
 
-function DataViewer({ constraints, data }) {
+function DataViewer({ originalConditions, constraints, data }) {
 
     if(!data) {
         return <Loader color="blue" />
@@ -31,6 +32,7 @@ function DataViewer({ constraints, data }) {
 
     const rowsData = data.data
     const query = data.query
+    const refinedConditions = data.conditions
     const groups = constraints.map((constraint) => ({attribute: constraint.attribute, value: constraint.value}))
 
     if(query !== 'None') {
@@ -45,6 +47,11 @@ function DataViewer({ constraints, data }) {
                         <Alert variant="light" color="blue" title="Query successfully refined" icon={<IconInfoCircle />} />
                     </div>
                     <Query query={query} />
+                    <Summary constraints={constraints} originalConditions={originalConditions} refinedConditions={refinedConditions} data={rowsData} />
+                    <Divider />
+                    <Center>
+                        <Title order={3}><IconDatabase size={18} />&nbsp;&nbsp;Data Difference Viewer</Title>
+                    </Center>
                     <ScrollArea>
                         <Table>
                             <Table.Thead>

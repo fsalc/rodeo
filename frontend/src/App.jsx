@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import { AppShell, Button, Center, Container, Group, Image, Loader, Stepper, Text } from "@mantine/core"
-import { IconChevronLeft, IconChevronsRight, IconSettings } from "@tabler/icons-react";
+import { AppShell, Button, Center, Container, Group, Image, Loader, Stepper, Text } from '@mantine/core';
+import { IconChevronLeft, IconChevronsRight, IconSettings } from '@tabler/icons-react';
 
 import logo from "./assets/rodeo.png";
 
-import { getDatasets, getMetadata, postRefinement } from "./provider"
-import { buildQuery } from './util'
-import Query from './components/Query'
-import QueryBuilder from "./components/QueryBuilder"
-import ConstraintsBuilder from "./components/ConstraintsBuilder";
+import { getDatasets, getMetadata, postRefinement } from './provider';
+import { buildQuery } from './util';
+import Query from './components/Query';
+import QueryBuilder from "./components/QueryBuilder";
+import ConstraintsBuilder from './components/ConstraintsBuilder';
 import Refinement from "./components/Refinement";
 import DataViewer from './components/DataViewer';
 
@@ -39,6 +39,8 @@ function App() {
   useEffect(() => {
     getDatasets().then((datasets) => setDatasets(datasets))
   }, [])
+
+  const refreshDatasets = () => getDatasets().then((datasets) => setDatasets(datasets));
 
   // Stepper state & buttons
   const [active, setActive] = useState(0);
@@ -79,7 +81,7 @@ function App() {
           <Stepper active={active} onStepClick={setActive}>
             <Stepper.Step label="Build query">
               <Query query={buildQuery(dataset, conditions, ranking)} />
-              <QueryBuilder datasets={datasets} dataset={dataset} setDataset={(value) => getMetadata(value).then((dataset) => setDataset(dataset))} conditions={conditions} addCondition={addCondition} deleteCondition={deleteCondition} modifyCondition={modifyCondition} ranking={ranking} modifyRanking={modifyRanking} />
+              <QueryBuilder datasets={datasets} dataset={dataset} setDataset={(value) => getMetadata(value).then((dataset) => setDataset(dataset))} conditions={conditions} addCondition={addCondition} deleteCondition={deleteCondition} modifyCondition={modifyCondition} ranking={ranking} modifyRanking={modifyRanking} refreshDatasets={refreshDatasets} />
             </Stepper.Step>
             <Stepper.Step label="Set constraints">
               <Query query={buildQuery(dataset, conditions, ranking)} />
@@ -91,7 +93,7 @@ function App() {
             </Stepper.Step>
             <Stepper.Completed>
               <Center>
-                  <DataViewer constraints={constraints} data={data} />
+                  <DataViewer originalConditions={conditions} constraints={constraints} data={data} />
               </Center>
             </Stepper.Completed>
           </Stepper>
@@ -106,7 +108,7 @@ function App() {
       </AppShell.Main>
       <AppShell.Footer>
         <Container>
-          <Text c="dimmed">Database Group at </Text>
+          <Text c="dimmed">Database Group at Ben-Gurion University of the Negev</Text>
         </Container>
       </AppShell.Footer>
     </AppShell>
