@@ -1,0 +1,7 @@
+duckdb==0.8.0
+Flask==3.0.3
+Flask_Cors==4.0.0
+numpy==1.24.3
+PuLP==2.7.0
+sqlglot==15.2.0
+Werkzeug==3.0.4

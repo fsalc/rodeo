@@ -10,6 +10,7 @@ function getDatasets() {
 
 function getMetadata(dataset) {
     return new Promise((resolve, reject) => {
+        // TODO: refactor
         if (dataset === 'Loading...') {
             resolve({ dataset: dataset, attributes: ['Loading'], domains: { 'Loading...': ['Loading...'] } })
         } else {
@@ -18,6 +19,18 @@ function getMetadata(dataset) {
             }).catch((error) => reject(error))
         }
     })
+}
+
+function getDistribution(dataset, attrs) {
+    if(dataset) {
+        const params = new URLSearchParams(attrs.map(attr => ['attr', attr]));
+        return new Promise((resolve, reject) => {
+            console.log(`http://127.0.0.1:5000/distribution/${dataset}?${params.toString()}`);
+            fetch(`http://127.0.0.1:5000/distribution/${dataset}?${params.toString()}`).then((response) => response.json()).then((distribution) => {
+                resolve(distribution)
+            }).catch((error) => reject(error))
+        })
+    }
 }
 
 function postRefinement(query, constraints, epsilon, method) {
@@ -68,4 +81,4 @@ function uploadFile(file, updateProgress) {
     })
 }
 
-export { getDatasets, getMetadata, postRefinement, uploadFile }
+export { getDatasets, getMetadata, getDistribution, postRefinement, uploadFile }

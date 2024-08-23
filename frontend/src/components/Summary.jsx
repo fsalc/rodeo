@@ -77,7 +77,7 @@ function Summary({ constraints, originalConditions, refinedConditions, data }) {
         // TODO: handle diffing original values for categorical attributes
         if(Array.isArray(condition.value)) {
             var values = condition.value.map((value) => {
-                return <Badge color="blue">{value}</Badge>
+                return <div><Badge color="blue">{value}</Badge><br/></div>
             });
         } else {
             // Not categorical, i.e. guaranteed to be numeric
@@ -89,7 +89,7 @@ function Summary({ constraints, originalConditions, refinedConditions, data }) {
             <Table.Tr>
                 <Table.Td>
                     <Center>
-                        <Badge color="grey">{condition.attr}</Badge>&nbsp;{opToString(condition.op)}&nbsp;{values}
+                        <Badge color="grey">{condition.attr}</Badge>&nbsp;{opToString(condition.op)}&nbsp;<div>{values}</div>
                     </Center>
                 </Table.Td>
             </Table.Tr>

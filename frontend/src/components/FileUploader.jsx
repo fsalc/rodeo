@@ -5,7 +5,7 @@ import { uploadFile } from '../provider';
 
 
 function FileUploader({ refreshDatasets }) {
-    const [file, setFile] = useState(null);
+    const [file, setFile] = useState(undefined);
     const [progress, setProgress] = useState(0);
     const [status, setStatus] = useState('waiting');
     const [modalOpen, setModalOpen] = useState(false);
@@ -33,7 +33,7 @@ function FileUploader({ refreshDatasets }) {
                 onClose={() => {
                     // reset everything
                     setModalOpen(false);
-                    setFile(null);
+                    setFile(undefined);
                     setProgress(0);
                     setStatus('waiting');
                 }}
@@ -54,7 +54,7 @@ function FileUploader({ refreshDatasets }) {
                     onChange={setFile}
                     disabled={status == 'uploading'}
                 />
-                <Button onClick={handleUpload} disabled={!file || status == 'uploading'} mt="sm">
+                <Button mt="sm" leftSection={<IconUpload size={14} />} variant="light" onClick={handleUpload} disabled={!file || status == 'uploading'}>
                     Upload
                 </Button>
                 {status == 'uploading' && (

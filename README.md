@@ -15,11 +15,9 @@ cd frontend
 npm install
 ```
 
-...
-
 ### Backend
 
-① IBM CPLEX must be installed. It can be acquired here.
+① IBM CPLEX must be installed. It can be acquired [here](https://www.ibm.com/products/ilog-cplex-optimization-studio).
 
 ② ```
   cd backend
@@ -27,7 +25,6 @@ npm install
   pip install -r requirements.txt
     ```
 
-...
 
 ## Running Rodeo
 
@@ -44,7 +41,3 @@ npm run dev
 cd backend
 ./run.sh
 ```
-
-## Using Rodeo
-
-...

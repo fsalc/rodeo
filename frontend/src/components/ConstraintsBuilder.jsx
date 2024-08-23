@@ -9,7 +9,7 @@ function ConstraintsBuilder({ dataset, constraints, handleAdd, handleDelete, han
       <Fieldset legend="Constraints">
         <Stack>
           <Stack>
-            {constraints.map(constraint => <Constraint key={constraint.id} constraint={constraint} attributes={dataset.attributes} domains={dataset.domains} handleDelete={handleDelete(constraint.id)} handleModify={handleModify(constraint.id)} />)}
+            {constraints.map(constraint => <Constraint key={constraint.id} dataset={dataset} constraint={constraint} handleDelete={handleDelete(constraint.id)} handleModify={handleModify(constraint.id)} />)}
           </Stack>
           <div>
             <Button leftSection={<IconPlus size={14} />} variant="light" onClick={handleAdd}>
