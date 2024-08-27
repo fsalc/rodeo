@@ -108,8 +108,8 @@ function Summary({ constraints, originalConditions, refinedConditions, data }) {
             // Not categorical, i.e. guaranteed to be numeric
             const originalValue = originalConditionValue(condition, originalConditions);
             console.log(condition, originalValue);
-            var values = <><Text fw={700}>{ condition.value }</Text>&nbsp;<Text c="dimmed" td="line-through">{ originalValue }</Text></>
-        }
+            var values = <><Text fw={700} span>{ condition.value }</Text>&nbsp;<Text c="dimmed" td="line-through" span>{ originalValue }</Text></>
+        } 
         return (
             <Table.Tr>
                 <Table.Td>
