@@ -83,7 +83,9 @@ def refine():
     ranking = Ranking(data['query'])
     constraints = []
     for constraint in data['constraints']:
-        constraints.append(Constraint(Group(constraint['attribute'], constraint['value']), (constraint['k'], constraint['cardinality']), sense='L' if constraint['operator'] == '>=' else 'U'))
+        attrs, vals = tuple(g['attribute'] for g in constraint['groups']), tuple(g['value'] for g in constraint['groups'])
+        print(attrs, vals)
+        constraints.append(Constraint(Group(attrs, vals), (constraint['k'], constraint['cardinality']), sense='L' if constraint['operator'] == '>=' else 'U'))
     constraints = Constraints(*constraints)
     refinement, times = ranking.refine(constraints, only_lower_bound_card_constraints=False, max_deviation=data['eps'], useful_method=methods[data['distance']])
     if refinement:

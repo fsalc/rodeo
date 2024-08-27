@@ -30,9 +30,12 @@ function App() {
 
   const modifyRanking = (part) => (e) => setRanking({ ...ranking, [part]: typeof e === 'string' ? e : e.target.value })
 
-  const addConstraint = () => setConstraints([...constraints, {id: nextId++, attribute: undefined, value: undefined, k: undefined, cardinality: undefined, operator: undefined}])
+  const addConstraint = () => setConstraints([...constraints, {id: nextId++, groups: [{id: nextId++, attribute: undefined, value: undefined}], k: undefined, cardinality: undefined, operator: undefined}])
   const deleteConstraint = (id) => () => setConstraints(constraints.filter(constraint => constraint.id !== id))
-  const modifyConstraint = (id) => (part) => (e) => setConstraints(constraints.map((constraint) => constraint.id === id ? { ...constraint, [part]: typeof e === 'string' || typeof e === 'number' ? e : e.target.value } : constraint))
+  const modifyConstraint = (id) => (part) => (e) => setConstraints(constraints.map((constraint) => constraint.id === id ? { ...constraint, [part]: typeof e === 'string' || typeof e === 'number' || typeof e === 'object' ? e : e.target.value } : constraint))
+
+  const addGroup = (groups) => [...groups, {id: nextId++, attribute: undefined, value: undefined}]
+  const modifyGroup = (groups, id, part) => (e) => groups.map((group) => group.id === id ? { ...group, [part]: typeof e === 'string' || typeof e === 'number' ? e : e.target.value } : group)
 
   const modifyRefinement = (part) => (e) => setRefinement({ ...refinement, [part]: typeof e === 'string' || typeof e === 'number' ? e : e.target.value })
 
@@ -85,7 +88,7 @@ function App() {
             </Stepper.Step>
             <Stepper.Step label="Set constraints">
               <Query query={buildQuery(dataset, conditions, ranking)} />
-              <ConstraintsBuilder dataset={dataset} query={buildQuery(dataset, conditions, ranking)} constraints={constraints} handleAdd={addConstraint} handleDelete={deleteConstraint} handleModify={modifyConstraint} />
+              <ConstraintsBuilder dataset={dataset} query={buildQuery(dataset, conditions, ranking)} constraints={constraints} handleAdd={addConstraint} handleDelete={deleteConstraint} handleModify={modifyConstraint} addGroup={addGroup} modifyGroup={modifyGroup} />
             </Stepper.Step>
             <Stepper.Step label="Configure refinement">
               <Query query={buildQuery(dataset, conditions, ranking)} />

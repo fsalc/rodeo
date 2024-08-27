@@ -44,31 +44,56 @@ const opToSign = (op) => {
     return op;
 }
 
+const constraintGroups = (constraint) => {
+    let attributes = [];
+    let values = [];
+    constraint.groups.forEach((group) => {
+        attributes.push(group.attribute);
+        values.push(group.value)
+    });
+    return {attributes: attributes, values: values}
+}
+
+const satisfiesConstraint = (row, constraint) => {
+    let match = true;
+    let {attributes, values} = constraintGroups(constraint);
+    attributes.forEach((attribute, i) => {
+        if(row[attribute] != values[i]) {
+            match = false;
+        }
+    })
+    return match;
+}
+
 const countGroups = (constraints, data) => {
     var running = {'all': 0}, count = {};
 
     // TODO: robust hashing
     constraints.forEach((constraint) => {
-        running[`${constraint.attribute}${constraint.value}`] = 0
-        count[`${constraint.attribute}${constraint.value}`] = {}
-        count[`${constraint.attribute}${constraint.value}`][constraint.k] = 0
+        const {attributes, values} = constraintGroups(constraint);
+        running[`${attributes}${values}`] = 0
+        count[`${attributes}${values}`] = {}
+        count[`${attributes}${values}`][constraint.k] = 0
     })
 
     data.forEach((row) => {
         if(row.__diff !== '-') {
             running['all'] += 1
-            constraints.filter((constraint) => row[constraint.attribute] == constraint.value).forEach((constraint) => {
-                running[`${constraint.attribute}${constraint.value}`] += 1;  
+            constraints.filter((constraint) => satisfiesConstraint(row, constraint)).forEach((constraint) => {
+                const {attributes, values} = constraintGroups(constraint);
+                running[`${attributes}${values}`] += 1;  
             })
             // If we have seen k tuples, and associated constraint is for k, then store running count giving #group in top-k
             constraints.forEach((constraint) => {
                 if(running['all'] === constraint.k) {
-                    count[`${constraint.attribute}${constraint.value}`][constraint.k] = running[`${constraint.attribute}${constraint.value}`];
+                    const {attributes, values} = constraintGroups(constraint);
+                    count[`${attributes}${values}`][constraint.k] = running[`${attributes}${values}`];
                 }
             })
         }
     })
 
+    console.log(count)
     return count
 }
 
@@ -98,14 +123,16 @@ function Summary({ constraints, originalConditions, refinedConditions, data }) {
 
     const groupsCount = countGroups(constraints, data);
     const constraintsSummary = constraints.map((constraint) => {
-        const count = groupsCount[`${constraint.attribute}${constraint.value}`][constraint.k];
+        const {attributes, values} = constraintGroups(constraint);
+        console.log(attributes, values);
+        const count = groupsCount[`${attributes}${values}`][constraint.k];
         return (
             <Table.Tr>
                 <Table.Td>
                     <Center>
                         <Stack>
                             <Center>
-                                <Badge color="blue">{constraint.attribute} = {constraint.value}</Badge>
+                                <Badge color="blue">{constraint.groups.map(group => `${group.attribute} = ${group.value}`).join(" ∧ ")}</Badge>
                             </Center>
                             <Center>
                                 <Text mt={-15} mb={-10}>{opToSign(constraint.operator)}{constraint.cardinality} in top-{constraint.k}</Text>

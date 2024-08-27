@@ -8,7 +8,7 @@ function ConstraintsViewer({ constraints, epsilon }) {
         let relaxed = constraint.operator === '<=' ? upper : lower;
         return (
             <Table.Tr key={constraint.id}>
-                <Table.Td><Badge color="blue">{constraint.attribute} = {constraint.value}</Badge></Table.Td>
+                <Table.Td><Badge color="blue">{constraint.groups.map(group => `${group.attribute} = ${group.value}`).join(" ∧ ")}</Badge></Table.Td>
                 <Table.Td>{constraint.operator === '<=' ? 'At most' : 'At least'} {constraint.cardinality} in top-{constraint.k}</Table.Td>
                 <Table.Td><RangeSlider max={constraint.k} value={constraint.operator === '<=' ? [0, upper] : [lower, constraint.k]} marks={[
                     {value: 0, label: '0'}, 

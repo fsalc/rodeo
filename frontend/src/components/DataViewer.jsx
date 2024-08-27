@@ -20,8 +20,33 @@ const rowProps = (row) => {
 }
 
 const rowGroups = (row, groups) => {
-    const badges = groups.filter((group) => row[group.attribute] == group.value).map((group) => <Badge color="blue">{group.attribute} = {group.value}</Badge>)
+    const badges = groups.filter((group) => satisfiesGroup(row, group)).map((group) => {
+        const groupStrs = group.attributes.map((attribute, index) => `${attribute} = ${group.values[index]}`)
+        return (<Badge color="blue">{groupStrs.join(" ∧ ")}</Badge>)
+    })
     return badges.length === 0 ? <Center>•</Center> : badges
+}
+
+const constraintGroups = (constraint) => {
+    let attributes = [];
+    let values = [];
+    constraint.groups.forEach((group) => {
+        attributes.push(group.attribute);
+        values.push(group.value)
+    });
+    return {attributes: attributes, values: values}
+}
+
+// TODO: combine with satisfiesConstraint in Summary component
+const satisfiesGroup = (row, group) => {
+    let match = true;
+    let {attributes, values} = group;
+    attributes.forEach((attribute, i) => {
+        if(row[attribute] != values[i]) {
+            match = false;
+        }
+    })
+    return match;
 }
 
 function DataViewer({ originalConditions, constraints, data }) {
@@ -33,7 +58,7 @@ function DataViewer({ originalConditions, constraints, data }) {
     const rowsData = data.data
     const query = data.query
     const refinedConditions = data.conditions
-    const groups = constraints.map((constraint) => ({attribute: constraint.attribute, value: constraint.value}))
+    const groups = constraints.map((constraint) => constraintGroups(constraint))
 
     if(query !== 'None') {
         const attributes = Object.keys(rowsData[0]).map((attribute) => attribute !== '__diff' ? <Table.Th>{attribute}</Table.Th> : <></>)

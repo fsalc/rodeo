@@ -1,16 +1,15 @@
 import { useState, useEffect } from 'react';
-import { ActionIcon, Center, Group, NumberInput, Select, TextInput, Popover } from "@mantine/core";
+import { ActionIcon, Center, Group, NumberInput, Select, TextInput, Popover, Stack, Box, Divider } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { getDistribution } from "../provider";
 import Plot from 'react-plotly.js';
 
-function Constraint({ dataset, constraint, handleDelete, handleModify }) {
+function Constraint({ dataset, constraint, handleDelete, handleModify, addGroup, modifyGroup }) {
   const [focused, setFocused] = useState(false);
   const [plotData, setPlotData] = useState({ids: [], labels: [], parents: [], values: []});
 
-  // TODO: support multiple attributes
-  const updateDistribution = (attr) => {
-    getDistribution(dataset.dataset, [attr]).then((distribution) => {
+  const updateDistribution = (attrs) => {
+    getDistribution(dataset.dataset, attrs.map(attr => attr.attribute)).then((distribution) => {
       setPlotData(distribution);
     }).catch((e) => {
       console.error(e);
@@ -18,17 +17,35 @@ function Constraint({ dataset, constraint, handleDelete, handleModify }) {
   }
 
   useEffect(() => {
-    if(constraint.attribute) {
-      updateDistribution(constraint.attribute);
-    }
+    updateDistribution(constraint.groups);
   }, [constraint])
 
   return (
     <Group>
-      <Select onChange={handleModify('attribute')} style={{width: 200}} placeholder="Attribute" data={dataset.attributes} label="Attribute" value={constraint.attribute} searchable />
-      <Select onChange={handleModify('value')} placeholder="Value" label="Value" value={constraint.value} data={dataset.domains[constraint.attribute]} searchable />
+      <Stack>
+        {constraint.groups.map((group) =>
+          <Group key={group.id}>
+            <Select onChange={(e) => {
+              console.log(modifyGroup(constraint.groups, group.id, 'attribute')(e));
+              handleModify('groups')(modifyGroup(constraint.groups, group.id, 'attribute')(e))
+            }} 
+              style={{width: 200}} placeholder="Attribute"
+              data={dataset.attributes} 
+              label="Attribute" 
+              value={group.attribute} 
+              searchable
+            />
+            <Select onChange={(e) => handleModify('groups')(modifyGroup(constraint.groups, group.id, 'value')(e))} 
+              placeholder="Value" label="Value" 
+              value={group.value} 
+              data={dataset.domains[group.attribute]} 
+              searchable 
+            />
+          </Group>
+        )}
+      </Stack>
       <Center>
-        <ActionIcon mt="24px" variant="default" radius="xl" onClick={handleDelete}>
+        <ActionIcon mt="24px" variant="default" radius="xl" onClick={() => handleModify('groups')(addGroup(constraint.groups))}>
           <IconPlus size={14}/>
         </ActionIcon>
       </Center>

@@ -25,7 +25,6 @@ function getDistribution(dataset, attrs) {
     if(dataset) {
         const params = new URLSearchParams(attrs.map(attr => ['attr', attr]));
         return new Promise((resolve, reject) => {
-            console.log(`http://127.0.0.1:5000/distribution/${dataset}?${params.toString()}`);
             fetch(`http://127.0.0.1:5000/distribution/${dataset}?${params.toString()}`).then((response) => response.json()).then((distribution) => {
                 resolve(distribution)
             }).catch((error) => reject(error))

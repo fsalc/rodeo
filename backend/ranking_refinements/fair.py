@@ -35,7 +35,7 @@ class Group(object):
         self.attr, self.val = attr, val
 
     def __str__(self):
-        return f'{self.attr} = {self.val}'
+        return ' AND '.join([f'{attr} == \'{val}\'' for attr, val in zip(self.attr, self.val)])
 
 
 class Constraint(object):
@@ -70,10 +70,16 @@ class Constraints(object):
         return ", ".join(map(str, self.constraints))
 
     def attrs(self):
+        return {a for c in self.constraints for a in c.group.attr}
+    
+    def groups(self):
         return {c.group.attr for c in self.constraints}
 
     def on(self, attr):
-        return list(filter(lambda c: c.group.attr == attr, self.constraints))
+        if type(attr) == str:
+            return list(filter(lambda c: attr in c.group.attr, self.constraints))
+        if type(attr) == tuple:
+            return list(filter(lambda c: attr == c.group.attr, self.constraints))
 
 # Small utility
 def string_is_float(x):
@@ -244,32 +250,39 @@ class Ranking(object):
 
     # TODO: Use sqlglot builder for this
     def group(self, g, attrs=None, top=None, opt=True):
-        if self.cached:
-            t = []
-            for i in range(len(self.cached[g.attr])):
-                # backwards compatability
-                try:
-                    g.val = float(g.val)
-                except ValueError:
-                    pass
-                if self.cached[g.attr][i] == g.val: t.append(self.cached['r'][i])
-            return t
-        else:
-            if opt:
-                return list(d.sql(f'''
-                        SELECT * FROM ({self.top_k_of_groups_query(select=attrs.union({g.attr}), attrs=attrs, top=top)}) WHERE "{g.attr}" == \'{g.val}\''''       
-                ).fetchnumpy()['r'])
-
-            q = sqlglot.select('*').from_(self.from_).order_by(self.utility)
-            for join in self.joins:
-                q.join(join)
-
-            return list(d.sql(
-                sqlglot.subquery(
-                    sqlglot.subquery(q).select(
-                        'row_number() over () - 1 as r').select(f"{g.attr}")
-                ).select('r').where(f'"{g.attr}" == \'{g.val}\'').sql()
+        # TODO: rework caching for multiattribute groups
+        # if self.cached:
+        #     t = []
+        #     for i in range(len(self.cached[g.attr])):
+        #         # backwards compatability
+        #         try:
+        #             g.val = float(g.val)
+        #         except ValueError:
+        #             pass
+        #         match = True
+        #         for attr, val in zip(g.attr, g.val):
+        #             if self.cached[attr][i] != val:
+        #                 match = False
+        #         if match: t.append(self.cached['r'][i])
+        #     return t
+        # else:
+        if opt:
+            print(f'''
+                    SELECT * FROM ({self.top_k_of_groups_query(select=attrs.union(set(g.attr)), attrs=attrs, top=top)}) WHERE {str(g)}''' )
+            return list(d.sql(f'''
+                    SELECT * FROM ({self.top_k_of_groups_query(select=attrs.union(set(g.attr)), attrs=attrs, top=top)}) WHERE {str(g)}'''      
             ).fetchnumpy()['r'])
+
+        q = sqlglot.select('*').from_(self.from_).order_by(self.utility)
+        for join in self.joins:
+            q.join(join)
+
+        return list(d.sql(
+            sqlglot.subquery(
+                sqlglot.subquery(q).select(
+                    'row_number() over () - 1 as r').select(f"{g.attr}")
+            ).select('r').where(str(g)).sql()
+        ).fetchnumpy()['r'])
 
 
     def refine(self, constraints, max_deviation=0, useful_method=UsefulMethod.QUERY_DISTANCE, debug=False, method=RefinementMethod.MILP_OPT, opt=True, only_lower_bound_card_constraints=False):
@@ -317,7 +330,7 @@ class Ranking(object):
             if debug: print('initializing aux variables to score abs difference of mospe')
             m = {a: {
                 c.group.val: {k[0]: LpVariable(f'max_{a}_{c.group.val}_{k[0]}', lowBound=0) for k in
-                            c.cardinalities} for c in constraints.on(a)} for a in protected}
+                            c.cardinalities} for c in constraints.on(a)} for a in constraints.groups()}
             
             # LP variables for provenance annotations
             # NOTE: Set of enabled provenance attributes for categorical attributes is equivalent to the set of constants
@@ -606,303 +619,305 @@ class Ranking(object):
                             prov[i] = [j]
 
             return Refinement(prov), times
-        elif method == RefinementMethod.BRUTE:
-            print('starting brute')
-            start_time = timer()
+        else:
+            raise NotImplementedError('These methods have been disabled in this distribution of the algorithm. Please see https://github.com/fsalc/diverse-top-k for the implementation including them.')
+        # elif method == RefinementMethod.BRUTE:
+        #     print('starting brute')
+        #     start_time = timer()
 
-            p_star = constraints.p_star
-            protected = {attr for attr in constraints.attrs()}
-            attrs = self.conds_attrs(self.conds())
-            relevant_attrs = list(protected.union(attrs))
+        #     p_star = constraints.p_star
+        #     protected = {attr for attr in constraints.attrs()}
+        #     attrs = self.conds_attrs(self.conds())
+        #     relevant_attrs = list(protected.union(attrs))
 
-            # From Python 3 documentation:
-            def powerset(iterable):
-                s = list(iterable)
-                return chain.from_iterable(combinations(s, r) for r in range(1, len(s)+1))
+        #     # From Python 3 documentation:
+        #     def powerset(iterable):
+        #         s = list(iterable)
+        #         return chain.from_iterable(combinations(s, r) for r in range(1, len(s)+1))
 
-            # Distance setups
-            C = defaultdict(list)
-            N = defaultdict(int)
-            if useful_method == UsefulMethod.QUERY_DISTANCE:
-                for cond in self.categorical():
-                    attr = [ident for ident in cond.find_all(sqlglot.expressions.Identifier)][0] # There should only be one
-                    val = list(filter(lambda x: x.is_string, [v for v in cond.find_all(sqlglot.expressions.Literal)]))
-                    C[attr].append(val)
-                for predicate in self.numerical():
-                    attr = self.conds_attrs([predicate]).pop()
-                    constant = float(self.conds_constants([predicate])[0])
-                    N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = constant
-            elif useful_method == UsefulMethod.KENDALL_DISTANCE or useful_method == UsefulMethod.MAX_ORIGINAL:
-                q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in attrs]).from_(self.from_).order_by(self.utility)
-                for join in self.joins:
-                    q = q.join(join)
-                quotedRenamed = " ".join([f'"{attr}"' if '.' in attr and ('"' not in attr and "'" not in attr) and not string_is_float(attr) else attr for attr in self.where.args['this'].sql().split(' ')])
-                print(quotedRenamed)
-                original = d.sql(
-                    sqlglot.subquery(
-                        sqlglot.subquery(q).select(
-                            'row_number() over () - 1 as r').select("*")
-                    ).select('*').where(quotedRenamed).order_by('r').limit(p_star).sql()).fetchnumpy()
+        #     # Distance setups
+        #     C = defaultdict(list)
+        #     N = defaultdict(int)
+        #     if useful_method == UsefulMethod.QUERY_DISTANCE:
+        #         for cond in self.categorical():
+        #             attr = [ident for ident in cond.find_all(sqlglot.expressions.Identifier)][0] # There should only be one
+        #             val = list(filter(lambda x: x.is_string, [v for v in cond.find_all(sqlglot.expressions.Literal)]))
+        #             C[attr].append(val)
+        #         for predicate in self.numerical():
+        #             attr = self.conds_attrs([predicate]).pop()
+        #             constant = float(self.conds_constants([predicate])[0])
+        #             N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = constant
+        #     elif useful_method == UsefulMethod.KENDALL_DISTANCE or useful_method == UsefulMethod.MAX_ORIGINAL:
+        #         q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in attrs]).from_(self.from_).order_by(self.utility)
+        #         for join in self.joins:
+        #             q = q.join(join)
+        #         quotedRenamed = " ".join([f'"{attr}"' if '.' in attr and ('"' not in attr and "'" not in attr) and not string_is_float(attr) else attr for attr in self.where.args['this'].sql().split(' ')])
+        #         print(quotedRenamed)
+        #         original = d.sql(
+        #             sqlglot.subquery(
+        #                 sqlglot.subquery(q).select(
+        #                     'row_number() over () - 1 as r').select("*")
+        #             ).select('*').where(quotedRenamed).order_by('r').limit(p_star).sql()).fetchnumpy()
 
-            # Get possible values of predicate constants
-            R = defaultdict(lambda: defaultdict(lambda: 0))
-            for attr in self.conds_attrs(self.categorical()):
-                R[f'{attr} IN'] = powerset(self.domain(attr))
-            for predicate in self.numerical():
-                attr = self.conds_attrs([predicate]).pop()
-                R[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = self.domain(attr)
+        #     # Get possible values of predicate constants
+        #     R = defaultdict(lambda: defaultdict(lambda: 0))
+        #     for attr in self.conds_attrs(self.categorical()):
+        #         R[f'{attr} IN'] = powerset(self.domain(attr))
+        #     for predicate in self.numerical():
+        #         attr = self.conds_attrs([predicate]).pop()
+        #         R[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = self.domain(attr)
 
-            p = 0
-            min_dist = float('inf')
-            min_conds = None
-            solver_time = timer()
-            # Pick possible refinement, check if pruned, then evaluate refinement and check distance & satisfaction
-            for i in (dict(zip(R.keys(), a)) for a in product(*R.values())):
-                conds = " AND ".join([f'''{k} ({", ".join(f"'{v_}'" for v_ in v)})''' if type(v) == tuple else f'{k} {v}' for k, v in i.items()])
+        #     p = 0
+        #     min_dist = float('inf')
+        #     min_conds = None
+        #     solver_time = timer()
+        #     # Pick possible refinement, check if pruned, then evaluate refinement and check distance & satisfaction
+        #     for i in (dict(zip(R.keys(), a)) for a in product(*R.values())):
+        #         conds = " AND ".join([f'''{k} ({", ".join(f"'{v_}'" for v_ in v)})''' if type(v) == tuple else f'{k} {v}' for k, v in i.items()])
 
-                guaranteedEmpty = False
-                for attr in self.conds_attrs(self.numerical()):
-                    lb = i.get(f'{attr} >', None) or i.get(f'{attr} >=', None)
-                    ub = i.get(f'{attr} <', None) or i.get(f'{attr} <=', None)
-                    if lb and ub and lb > ub:
-                        guaranteedEmpty = True
-                if guaranteedEmpty: continue
+        #         guaranteedEmpty = False
+        #         for attr in self.conds_attrs(self.numerical()):
+        #             lb = i.get(f'{attr} >', None) or i.get(f'{attr} >=', None)
+        #             ub = i.get(f'{attr} <', None) or i.get(f'{attr} <=', None)
+        #             if lb and ub and lb > ub:
+        #                 guaranteedEmpty = True
+        #         if guaranteedEmpty: continue
 
-                counts = []
-                if useful_method == UsefulMethod.KENDALL_DISTANCE or useful_method == UsefulMethod.MAX_ORIGINAL:
-                    q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in relevant_attrs]).from_(self.from_).order_by(self.utility)
-                    for join in self.joins:
-                        q = q.join(join)
-                    quotedRenamed = " ".join([f'"{attr}"' if '.' in attr and ('"' not in attr and "'" not in attr) and not string_is_float(attr) else attr for attr in conds.split(' ')])
-                    result = d.sql(
-                        sqlglot.subquery(
-                            sqlglot.subquery(q).select(
-                                'row_number() over () - 1 as r').select('*')
-                        ).select('*').where(quotedRenamed).order_by('r').limit(p_star).sql())
-                else:
-                    result = d.sql(self.query.where(conds, append=False).limit(p_star).sql())
-                tuples = result.fetchnumpy()
-                for constraint in constraints:
-                    counts.append(len([t for t in tuples[constraint.group.attr if '.' not in constraint.group.attr or useful_method == UsefulMethod.KENDALL_DISTANCE or useful_method == UsefulMethod.MAX_ORIGINAL else constraint.group.attr.split('.')[-1]] if t == constraint.group.val]))
+        #         counts = []
+        #         if useful_method == UsefulMethod.KENDALL_DISTANCE or useful_method == UsefulMethod.MAX_ORIGINAL:
+        #             q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in relevant_attrs]).from_(self.from_).order_by(self.utility)
+        #             for join in self.joins:
+        #                 q = q.join(join)
+        #             quotedRenamed = " ".join([f'"{attr}"' if '.' in attr and ('"' not in attr and "'" not in attr) and not string_is_float(attr) else attr for attr in conds.split(' ')])
+        #             result = d.sql(
+        #                 sqlglot.subquery(
+        #                     sqlglot.subquery(q).select(
+        #                         'row_number() over () - 1 as r').select('*')
+        #                 ).select('*').where(quotedRenamed).order_by('r').limit(p_star).sql())
+        #         else:
+        #             result = d.sql(self.query.where(conds, append=False).limit(p_star).sql())
+        #         tuples = result.fetchnumpy()
+        #         for constraint in constraints:
+        #             counts.append(len([t for t in tuples[constraint.group.attr if '.' not in constraint.group.attr or useful_method == UsefulMethod.KENDALL_DISTANCE or useful_method == UsefulMethod.MAX_ORIGINAL else constraint.group.attr.split('.')[-1]] if t == constraint.group.val]))
 
-                deviation = 0
-                constraint_weight = 1 / len(counts)
-                for j in range(len(counts)):
-                    deviation += max(constraints[j].cardinalities[0][1] - counts[j], 0) / constraints[j].cardinalities[0][1] * constraint_weight
+        #         deviation = 0
+        #         constraint_weight = 1 / len(counts)
+        #         for j in range(len(counts)):
+        #             deviation += max(constraints[j].cardinalities[0][1] - counts[j], 0) / constraints[j].cardinalities[0][1] * constraint_weight
                 
-                # Distance calculation
-                dist = 0
-                if useful_method == UsefulMethod.QUERY_DISTANCE:
-                    for attr in self.conds_attrs(self.categorical()):
-                        intersection = set(i[f'{attr} IN']).intersection(set(C[attr]))
-                        union = set(i[f'{attr} IN']).union(set(C[attr]))
-                        dist += 1 - (len(intersection) / len(union))
-                    for predicate in self.numerical():
-                        attr = self.conds_attrs([predicate]).pop()
-                        dist += abs(N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] - i[f'{attr} {NUMERIC_OPS[type(predicate)]}']) / N[f'{attr} {NUMERIC_OPS[type(predicate)]}']
-                elif useful_method == UsefulMethod.MAX_ORIGINAL:
-                    intersection = len(set(original['r']).intersection(set(tuples['r'])))
-                    union = len(tuples['r']) + len(original['r']) - intersection
-                    dist = 1 - (intersection/union)
-                elif useful_method == UsefulMethod.KENDALL_DISTANCE:
-                    union = set(original['r']).union(set(tuples['r']))
-                    for (t, t_) in combinations(union, 2):
-                        # Case 2
-                        if t in original['r'] and t_ in original['r'] and t in tuples['r'] and t_ not in tuples['r'] and t_ < t:
-                            dist += 1
-                        if t in original['r'] and t_ in original['r'] and t not in tuples['r'] and t_ in tuples['r'] and t < t_:
-                            dist += 1
-                        # Case 3
-                        if t in original['r'] and t_ not in original['r'] and t not in tuples['r'] and t_ in tuples['r']:
-                            dist += 1
-                        if t not in original['r'] and t_ in original['r'] and t in tuples['r'] and t_ not in tuples['r']:
-                            dist += 1
+        #         # Distance calculation
+        #         dist = 0
+        #         if useful_method == UsefulMethod.QUERY_DISTANCE:
+        #             for attr in self.conds_attrs(self.categorical()):
+        #                 intersection = set(i[f'{attr} IN']).intersection(set(C[attr]))
+        #                 union = set(i[f'{attr} IN']).union(set(C[attr]))
+        #                 dist += 1 - (len(intersection) / len(union))
+        #             for predicate in self.numerical():
+        #                 attr = self.conds_attrs([predicate]).pop()
+        #                 dist += abs(N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] - i[f'{attr} {NUMERIC_OPS[type(predicate)]}']) / N[f'{attr} {NUMERIC_OPS[type(predicate)]}']
+        #         elif useful_method == UsefulMethod.MAX_ORIGINAL:
+        #             intersection = len(set(original['r']).intersection(set(tuples['r'])))
+        #             union = len(tuples['r']) + len(original['r']) - intersection
+        #             dist = 1 - (intersection/union)
+        #         elif useful_method == UsefulMethod.KENDALL_DISTANCE:
+        #             union = set(original['r']).union(set(tuples['r']))
+        #             for (t, t_) in combinations(union, 2):
+        #                 # Case 2
+        #                 if t in original['r'] and t_ in original['r'] and t in tuples['r'] and t_ not in tuples['r'] and t_ < t:
+        #                     dist += 1
+        #                 if t in original['r'] and t_ in original['r'] and t not in tuples['r'] and t_ in tuples['r'] and t < t_:
+        #                     dist += 1
+        #                 # Case 3
+        #                 if t in original['r'] and t_ not in original['r'] and t not in tuples['r'] and t_ in tuples['r']:
+        #                     dist += 1
+        #                 if t not in original['r'] and t_ in original['r'] and t in tuples['r'] and t_ not in tuples['r']:
+        #                     dist += 1
 
-                if dist < min_dist and deviation <= max_deviation:
-                    min_dist, min_conds = dist, i
-                    print('*\t', conds, counts, '\tdev:', deviation, '\tdist:', dist)
+        #         if dist < min_dist and deviation <= max_deviation:
+        #             min_dist, min_conds = dist, i
+        #             print('*\t', conds, counts, '\tdev:', deviation, '\tdist:', dist)
 
-            end_time = timer()
-            times = (start_time, solver_time, end_time)
+        #     end_time = timer()
+        #     times = (start_time, solver_time, end_time)
 
-            if not min_conds:
-                raise Exception('no refinement found')
+        #     if not min_conds:
+        #         raise Exception('no refinement found')
 
-            prov = {}
-            for attr in self.conds_attrs(self.categorical()):
-                prov[attr] = list(min_conds[f'{attr} IN'])
-            for predicate in self.numerical():
-                attr = self.conds_attrs([predicate]).pop()
-                if prov.get(attr):
-                    prov[attr][NUMERIC_OPS[type(predicate)]] = min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']
-                else:
-                    prov[attr] = {NUMERIC_OPS[type(predicate)]: min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']}
+        #     prov = {}
+        #     for attr in self.conds_attrs(self.categorical()):
+        #         prov[attr] = list(min_conds[f'{attr} IN'])
+        #     for predicate in self.numerical():
+        #         attr = self.conds_attrs([predicate]).pop()
+        #         if prov.get(attr):
+        #             prov[attr][NUMERIC_OPS[type(predicate)]] = min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']
+        #         else:
+        #             prov[attr] = {NUMERIC_OPS[type(predicate)]: min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']}
 
-            return Refinement(prov), times
-        elif method == RefinementMethod.BRUTE_PROV:
-            # TODO: Refactor and combine with above method
-            print('starting brute w/ prov')
-            start_time = timer()
+        #     return Refinement(prov), times
+        # elif method == RefinementMethod.BRUTE_PROV:
+        #     # TODO: Refactor and combine with above method
+        #     print('starting brute w/ prov')
+        #     start_time = timer()
 
-            p_star = constraints.p_star
-            protected = {attr for attr in constraints.attrs()}
-            attrs = self.conds_attrs(self.conds())
-            relevant_attrs = list(protected.union(attrs))
+        #     p_star = constraints.p_star
+        #     protected = {attr for attr in constraints.attrs()}
+        #     attrs = self.conds_attrs(self.conds())
+        #     relevant_attrs = list(protected.union(attrs))
 
-            # From Python 3 documentation:
-            def powerset(iterable):
-                s = list(iterable)
-                return chain.from_iterable(combinations(s, r) for r in range(1, len(s)+1))
+        #     # From Python 3 documentation:
+        #     def powerset(iterable):
+        #         s = list(iterable)
+        #         return chain.from_iterable(combinations(s, r) for r in range(1, len(s)+1))
 
-            # Distance setups
-            C = defaultdict(list)
-            N = defaultdict(int)
-            if useful_method == UsefulMethod.QUERY_DISTANCE:
-                for predicate in self.categorical():
-                    attr = self.conds_attrs([predicate]).pop()
-                    val = list(map(lambda x: x.this, list(filter(lambda x: x.is_string, [v for v in predicate.find_all(sqlglot.expressions.Literal)]))))
-                    C[attr].append(val[0])
-                for predicate in self.numerical():
-                    attr = self.conds_attrs([predicate]).pop()
-                    constant = float(self.conds_constants([predicate])[0])
-                    N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = constant
-            elif useful_method == UsefulMethod.MAX_ORIGINAL or useful_method == UsefulMethod.KENDALL_DISTANCE:
-                q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in attrs]).from_(self.from_).order_by(self.utility)
-                for join in self.joins:
-                    q = q.join(join)
-                quotedRenamed = " ".join([f'"{attr}"' if '.' in attr and ('"' not in attr and "'" not in attr) and not string_is_float(attr) else attr for attr in self.where.args['this'].sql().split(' ')])
-                print(quotedRenamed)
-                original = d.sql(
-                    sqlglot.subquery(
-                        sqlglot.subquery(q).select(
-                            'row_number() over () - 1 as r').select("*")
-                    ).select('*').where(quotedRenamed).order_by('r').limit(p_star).sql()).fetchnumpy()
+        #     # Distance setups
+        #     C = defaultdict(list)
+        #     N = defaultdict(int)
+        #     if useful_method == UsefulMethod.QUERY_DISTANCE:
+        #         for predicate in self.categorical():
+        #             attr = self.conds_attrs([predicate]).pop()
+        #             val = list(map(lambda x: x.this, list(filter(lambda x: x.is_string, [v for v in predicate.find_all(sqlglot.expressions.Literal)]))))
+        #             C[attr].append(val[0])
+        #         for predicate in self.numerical():
+        #             attr = self.conds_attrs([predicate]).pop()
+        #             constant = float(self.conds_constants([predicate])[0])
+        #             N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = constant
+        #     elif useful_method == UsefulMethod.MAX_ORIGINAL or useful_method == UsefulMethod.KENDALL_DISTANCE:
+        #         q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in attrs]).from_(self.from_).order_by(self.utility)
+        #         for join in self.joins:
+        #             q = q.join(join)
+        #         quotedRenamed = " ".join([f'"{attr}"' if '.' in attr and ('"' not in attr and "'" not in attr) and not string_is_float(attr) else attr for attr in self.where.args['this'].sql().split(' ')])
+        #         print(quotedRenamed)
+        #         original = d.sql(
+        #             sqlglot.subquery(
+        #                 sqlglot.subquery(q).select(
+        #                     'row_number() over () - 1 as r').select("*")
+        #             ).select('*').where(quotedRenamed).order_by('r').limit(p_star).sql()).fetchnumpy()
 
-            # Capture lineages and add relevant tuples
-            # all_ranked = self.all_ranked(opt=False)
-            q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in relevant_attrs]).from_(self.from_).order_by(self.utility)
-            for join in self.joins:
-                q = q.join(join)
-            all_ranked = {k: v.filled() for k, v in d.sql(
-                    sqlglot.subquery(
-                        sqlglot.subquery(q).select(
-                            'row_number() over () - 1 as r').select('*')
-                        ).select('*').sql()
-                ).fetchnumpy().items()}
-            print('all ranked')
-            cardinality = len(all_ranked[list(all_ranked.keys())[0]])
+        #     # Capture lineages and add relevant tuples
+        #     # all_ranked = self.all_ranked(opt=False)
+        #     q = sqlglot.select(*[f'"{s}"' if '.' not in s else f'{s} AS "{s}"' for s in relevant_attrs]).from_(self.from_).order_by(self.utility)
+        #     for join in self.joins:
+        #         q = q.join(join)
+        #     all_ranked = {k: v.filled() for k, v in d.sql(
+        #             sqlglot.subquery(
+        #                 sqlglot.subquery(q).select(
+        #                     'row_number() over () - 1 as r').select('*')
+        #                 ).select('*').sql()
+        #         ).fetchnumpy().items()}
+        #     print('all ranked')
+        #     cardinality = len(all_ranked[list(all_ranked.keys())[0]])
 
-            # all_ranked_tuples = {attr: all_ranked[attr][t] for attr in relevant_attrs + ['r'] for t in range(cardinality)}
+        #     # all_ranked_tuples = {attr: all_ranked[attr][t] for attr in relevant_attrs + ['r'] for t in range(cardinality)}
 
-            lineages, lineage_tuples = set(), defaultdict(list)
-            for t in range(cardinality):
-                lineage = Lineage({attr: all_ranked[attr][t] for attr in attrs}, attrs)
-                lineages.add(lineage)
-                lineage_tuples[lineage].append(all_ranked['r'][t])
+        #     lineages, lineage_tuples = set(), defaultdict(list)
+        #     for t in range(cardinality):
+        #         lineage = Lineage({attr: all_ranked[attr][t] for attr in attrs}, attrs)
+        #         lineages.add(lineage)
+        #         lineage_tuples[lineage].append(all_ranked['r'][t])
 
-            # Get possible values of predicate constants
-            R = defaultdict(lambda: defaultdict(lambda: 0))
-            for attr in self.conds_attrs(self.categorical()):
-                R[f'{attr} IN'] = powerset(self.domain(attr))
-            for predicate in self.numerical():
-                attr = self.conds_attrs([predicate]).pop()
-                R[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = self.domain(attr)
+        #     # Get possible values of predicate constants
+        #     R = defaultdict(lambda: defaultdict(lambda: 0))
+        #     for attr in self.conds_attrs(self.categorical()):
+        #         R[f'{attr} IN'] = powerset(self.domain(attr))
+        #     for predicate in self.numerical():
+        #         attr = self.conds_attrs([predicate]).pop()
+        #         R[f'{attr} {NUMERIC_OPS[type(predicate)]}'] = self.domain(attr)
 
-            p = 0
-            min_dist = float('inf')
-            min_conds = None
-            solver_time = timer()
-            # Pick possible refinement, check if pruned, then evaluate refinement and check distance & satisfaction
-            for i in (dict(zip(R.keys(), a)) for a in product(*R.values())):
-                conds = " AND ".join([f'''{k} ({", ".join(f"'{v_}'" for v_ in v)})''' if type(v) == tuple else f'{k} {v}' for k, v in i.items()])
+        #     p = 0
+        #     min_dist = float('inf')
+        #     min_conds = None
+        #     solver_time = timer()
+        #     # Pick possible refinement, check if pruned, then evaluate refinement and check distance & satisfaction
+        #     for i in (dict(zip(R.keys(), a)) for a in product(*R.values())):
+        #         conds = " AND ".join([f'''{k} ({", ".join(f"'{v_}'" for v_ in v)})''' if type(v) == tuple else f'{k} {v}' for k, v in i.items()])
 
-                guaranteedEmpty = False
-                for attr in self.conds_attrs(self.numerical()):
-                    lb = i.get(f'{attr} >', None) or i.get(f'{attr} >=', None)
-                    ub = i.get(f'{attr} <', None) or i.get(f'{attr} <=', None)
-                    if lb and ub and lb > ub:
-                        guaranteedEmpty = True
-                if guaranteedEmpty: continue
+        #         guaranteedEmpty = False
+        #         for attr in self.conds_attrs(self.numerical()):
+        #             lb = i.get(f'{attr} >', None) or i.get(f'{attr} >=', None)
+        #             ub = i.get(f'{attr} <', None) or i.get(f'{attr} <=', None)
+        #             if lb and ub and lb > ub:
+        #                 guaranteedEmpty = True
+        #         if guaranteedEmpty: continue
 
-                result = []
-                for lineage in lineages:
-                    #check if match
-                    match = True
-                    for attr in attrs:
-                        if i.get(f'{attr} IN', None) and lineage[attr] not in i.get(f'{attr} IN', None):
-                            match = False
-                        if i.get(f'{attr} >', None) and lineage[attr] <= i.get(f'{attr} >', None):
-                            match = False
-                        if i.get(f'{attr} >=', None) and lineage[attr] < i.get(f'{attr} >=', None):
-                            match = False
-                        if i.get(f'{attr} <', None) and lineage[attr] >= i.get(f'{attr} <', None):
-                            match = False
-                        if i.get(f'{attr} <=', None) and lineage[attr] > i.get(f'{attr} <=', None):
-                            match = False
-                    #if match, add to priority queue
-                    if match:
-                        result.extend(lineage_tuples[lineage])
-                        # for t in lineage_tuples[lineage]:
-                        #     heapq.heappush(result, (t['r'], t))
-                heapq.heapify(result)
-                tuples = []
-                while len(tuples) < p_star and result:
-                    tuples.append(heapq.heappop(result))
+        #         result = []
+        #         for lineage in lineages:
+        #             #check if match
+        #             match = True
+        #             for attr in attrs:
+        #                 if i.get(f'{attr} IN', None) and lineage[attr] not in i.get(f'{attr} IN', None):
+        #                     match = False
+        #                 if i.get(f'{attr} >', None) and lineage[attr] <= i.get(f'{attr} >', None):
+        #                     match = False
+        #                 if i.get(f'{attr} >=', None) and lineage[attr] < i.get(f'{attr} >=', None):
+        #                     match = False
+        #                 if i.get(f'{attr} <', None) and lineage[attr] >= i.get(f'{attr} <', None):
+        #                     match = False
+        #                 if i.get(f'{attr} <=', None) and lineage[attr] > i.get(f'{attr} <=', None):
+        #                     match = False
+        #             #if match, add to priority queue
+        #             if match:
+        #                 result.extend(lineage_tuples[lineage])
+        #                 # for t in lineage_tuples[lineage]:
+        #                 #     heapq.heappush(result, (t['r'], t))
+        #         heapq.heapify(result)
+        #         tuples = []
+        #         while len(tuples) < p_star and result:
+        #             tuples.append(heapq.heappop(result))
 
-                counts = []
-                for constraint in constraints:
-                    counts.append(len([t for t in tuples if all_ranked[constraint.group.attr][t] == constraint.group.val]))
-                deviation = 0
-                constraint_weight = 1 / len(counts)
-                for j in range(len(counts)):
-                    deviation += max(constraints[j].cardinalities[0][1] - counts[j], 0) / constraints[j].cardinalities[0][1] * constraint_weight
+        #         counts = []
+        #         for constraint in constraints:
+        #             counts.append(len([t for t in tuples if all_ranked[constraint.group.attr][t] == constraint.group.val]))
+        #         deviation = 0
+        #         constraint_weight = 1 / len(counts)
+        #         for j in range(len(counts)):
+        #             deviation += max(constraints[j].cardinalities[0][1] - counts[j], 0) / constraints[j].cardinalities[0][1] * constraint_weight
 
-                # Distance calculation
-                dist = 0
-                if useful_method == UsefulMethod.QUERY_DISTANCE:
-                    for attr in self.conds_attrs(self.categorical()):
-                        intersection = set(i[f'{attr} IN']).intersection(C[attr])
-                        union = set(i[f'{attr} IN']).union(C[attr])
-                        dist += 1 - (len(intersection) / len(union))
-                    for predicate in self.numerical():
-                        attr = self.conds_attrs([predicate]).pop()
-                        dist += abs(N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] - i[f'{attr} {NUMERIC_OPS[type(predicate)]}']) / N[f'{attr} {NUMERIC_OPS[type(predicate)]}']
-                elif useful_method == UsefulMethod.MAX_ORIGINAL:
-                    intersection = len(set(tuples).intersection(set(original['r'])))
-                    union = len(tuples) + len(original) - intersection
-                    dist = 1 - (intersection/union)
-                elif useful_method == UsefulMethod.KENDALL_DISTANCE:
-                    union = set(original['r']).union(set(tuples))
-                    for (t, t_) in combinations(union, 2):
-                        # Case 2
-                        if t in original['r'] and t_ in original['r'] and t in tuples and t_ not in tuples and t_ < t:
-                            dist += 1
-                        if t in original['r'] and t_ in original['r'] and t not in tuples and t_ in tuples and t < t_:
-                            dist += 1
-                        # Case 3
-                        if t in original['r'] and t_ not in original['r'] and t not in tuples and t_ in tuples:
-                            dist += 1
-                        if t not in original['r'] and t_ in original['r'] and t in tuples and t_ not in tuples:
-                            dist += 1
+        #         # Distance calculation
+        #         dist = 0
+        #         if useful_method == UsefulMethod.QUERY_DISTANCE:
+        #             for attr in self.conds_attrs(self.categorical()):
+        #                 intersection = set(i[f'{attr} IN']).intersection(C[attr])
+        #                 union = set(i[f'{attr} IN']).union(C[attr])
+        #                 dist += 1 - (len(intersection) / len(union))
+        #             for predicate in self.numerical():
+        #                 attr = self.conds_attrs([predicate]).pop()
+        #                 dist += abs(N[f'{attr} {NUMERIC_OPS[type(predicate)]}'] - i[f'{attr} {NUMERIC_OPS[type(predicate)]}']) / N[f'{attr} {NUMERIC_OPS[type(predicate)]}']
+        #         elif useful_method == UsefulMethod.MAX_ORIGINAL:
+        #             intersection = len(set(tuples).intersection(set(original['r'])))
+        #             union = len(tuples) + len(original) - intersection
+        #             dist = 1 - (intersection/union)
+        #         elif useful_method == UsefulMethod.KENDALL_DISTANCE:
+        #             union = set(original['r']).union(set(tuples))
+        #             for (t, t_) in combinations(union, 2):
+        #                 # Case 2
+        #                 if t in original['r'] and t_ in original['r'] and t in tuples and t_ not in tuples and t_ < t:
+        #                     dist += 1
+        #                 if t in original['r'] and t_ in original['r'] and t not in tuples and t_ in tuples and t < t_:
+        #                     dist += 1
+        #                 # Case 3
+        #                 if t in original['r'] and t_ not in original['r'] and t not in tuples and t_ in tuples:
+        #                     dist += 1
+        #                 if t not in original['r'] and t_ in original['r'] and t in tuples and t_ not in tuples:
+        #                     dist += 1
 
-                if dist < min_dist and deviation <= max_deviation:
-                    min_dist, min_conds = dist, i
-                    print('*\t', conds, counts, '\tdev:', deviation, '\tdist:', dist)
+        #         if dist < min_dist and deviation <= max_deviation:
+        #             min_dist, min_conds = dist, i
+        #             print('*\t', conds, counts, '\tdev:', deviation, '\tdist:', dist)
 
-            end_time = timer()
-            times = (start_time, solver_time, end_time)
+        #     end_time = timer()
+        #     times = (start_time, solver_time, end_time)
 
-            if not min_conds:
-                raise Exception('no refinement found')
+        #     if not min_conds:
+        #         raise Exception('no refinement found')
 
-            prov = {}
-            for attr in self.conds_attrs(self.categorical()):
-                prov[attr] = list(min_conds[f'{attr} IN'])
-            for predicate in self.numerical():
-                attr = self.conds_attrs([predicate]).pop()
-                if prov.get(attr):
-                    prov[attr][NUMERIC_OPS[type(predicate)]] = min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']
-                else:
-                    prov[attr] = {NUMERIC_OPS[type(predicate)]: min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']}
+        #     prov = {}
+        #     for attr in self.conds_attrs(self.categorical()):
+        #         prov[attr] = list(min_conds[f'{attr} IN'])
+        #     for predicate in self.numerical():
+        #         attr = self.conds_attrs([predicate]).pop()
+        #         if prov.get(attr):
+        #             prov[attr][NUMERIC_OPS[type(predicate)]] = min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']
+        #         else:
+        #             prov[attr] = {NUMERIC_OPS[type(predicate)]: min_conds[f'{attr} {NUMERIC_OPS[type(predicate)]}']}
 
-            return Refinement(prov), times
+        #     return Refinement(prov), times
